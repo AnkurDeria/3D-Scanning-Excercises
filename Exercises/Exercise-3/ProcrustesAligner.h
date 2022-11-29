@@ -31,31 +31,39 @@ private:
 	Vector3f computeMean(const std::vector<Vector3f>& points) {
 		// TODO: Compute the mean of input points.
 		// Hint: You can use the .size() method to get the length of a vector.
-		Vector3f mean;
-		for (const auto& point : points)
-		{
+		Vector3f mean = Vector3f::Zero();
+		for (auto point : points) {
 			mean += point;
 		}
-		return mean/points.size();
+		mean /= points.size();
+		std::cout << "Mean[x,y,z]: [" << mean[0] << ", " << mean[1] << ", " << mean[2] << "]" << std::endl;
+		return mean;
 	}
 
 	Matrix3f estimateRotation(const std::vector<Vector3f>& sourcePoints, const Vector3f& sourceMean, const std::vector<Vector3f>& targetPoints, const Vector3f& targetMean) {
 		// TODO: Estimate the rotation from source to target points, following the Procrustes algorithm.
 		// To compute the singular value decomposition you can use JacobiSVD() from Eigen.
 		// Hint: You can initialize an Eigen matrix with "MatrixXf m(num_rows,num_cols);" and access/modify parts of it using the .block() method (see above).
-		MatrixXf sourcePointMat(sourcePoints.size(), 3);
-		MatrixXf targetPointMat(targetPoints.size(), 3);
-		for (int i = 0; i < sourcePoints.size(); i++)
-		{
-			sourcePointMat.block(i, 0, 1, 1) = sourcePoints[i] - sourceMean;
+		Matrix3f rotation = Matrix3f::Identity();
+		Matrix3f X = Matrix3f::Zero();
+		for (int i = 0; i < sourcePoints.size(); i++) {
+			X += (targetPoints[i] - targetMean) * (sourcePoints[i] - sourceMean).transpose();
 		}
-		for (int i = 0; i < targetPoints.size(); i++)
-		{
-			targetPointMat.block(i, 0, 1, 1) = targetPoints[i] - targetMean;
-		}
+		// calculate UV with X
+		Eigen::JacobiSVD<MatrixXf> svd(X, Eigen::ComputeFullU | Eigen::ComputeFullV);
+		// R = U * V.transposed
+		rotation = svd.matrixU() * svd.matrixV().transpose();
 
-		Matrix3f rotation = targetPointMat  * targetPointMat.normalized().transpose();
-        return rotation;
+		// to make sure the rotation matrix is good
+		if (abs(rotation.determinant() + 1) < 1e-9) {
+			//	| 1 0 0  |
+			//	| 0 1 0	 |
+			//	| 0 0 -1 |
+			Matrix3f mirror = Matrix3f::Identity();
+			mirror(2, 2) = -1;
+			rotation = svd.matrixU() * mirror * svd.matrixV().transpose();
+		}
+		return rotation;
 	}
 
 	Vector3f computeTranslation(const Vector3f& sourceMean, const Vector3f& targetMean, const Matrix3f& rotation) {

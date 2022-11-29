@@ -1289,3 +1289,6 @@ DerivedDataCache/*
 Exercises/Data/*
 
 *.zip
+
+Exercises/Data/*
+Exercises/Libs/*
