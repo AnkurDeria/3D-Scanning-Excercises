@@ -110,11 +110,16 @@ public:
         // increment (pose parameters) to the source point, you can use the PoseIncrement
         // class.
         // Important: Ceres automatically squares the cost function.
-
-        residuals[0] = T(0);
-		residuals[1] = T(0);
-		residuals[2] = T(0);
-
+        PoseIncrement<T> pose_increment(const_cast<T* const>(pose));
+        T new_source[3];
+        T og_source[3];
+        og_source[0] = T(m_sourcePoint[0]);
+        og_source[1] = T(m_sourcePoint[1]);
+        og_source[2] = T(m_sourcePoint[2]);
+        pose_increment.apply(og_source, new_source);
+        residuals[0] = (T(m_targetPoint[0]) - new_source[0]) * ceres::sqrt(T(m_weight));
+        residuals[1] = (T(m_targetPoint[1]) - new_source[1]) * ceres::sqrt(T(m_weight));
+        residuals[2] = (T(m_targetPoint[2]) - new_source[2]) * ceres::sqrt(T(m_weight));
         return true;
     }
 
@@ -147,8 +152,14 @@ public:
         // increment (pose parameters) to the source point, you can use the PoseIncrement
         // class.
         // Important: Ceres automatically squares the cost function.
+        PoseIncrement<T> pose_increment(const_cast<T* const>(pose));
+        T new_source[3], og_source[3];
+        og_source[0] = T(m_sourcePoint[0]);
+        og_source[1] = T(m_sourcePoint[1]);
+        og_source[2] = T(m_sourcePoint[2]);
+        pose_increment.apply(og_source, new_source);
 
-        residuals[0] = T(0);
+        residuals[0] = ceres::sqrt(T(m_weight)) * (T(m_targetNormal[0]) * (T(m_targetPoint[0]) - new_source[0]) + T(m_targetNormal[1]) * (T(m_targetPoint[1]) - new_source[1]) + T(m_targetNormal[2]) * (T(m_targetPoint[2]) - new_source[2]));
 
         return true;
     }
@@ -235,7 +246,11 @@ protected:
                 const auto& targetNormal = targetNormals[match.idx];
 
                 // TODO: Invalidate the match (set it to -1) if the angle between the normals is greater than 60
-                
+                const auto angle = acos(sourceNormal.dot(targetNormal));
+                if (angle > M_PI / 3.0)
+                {
+                    match.idx = -1;
+                }
             }
         }
     }
@@ -329,7 +344,10 @@ private:
 
                 // TODO: Create a new point-to-point cost function and add it as constraint (i.e. residual block) 
                 // to the Ceres problem.
-
+                problem.AddResidualBlock(
+                    PointToPointConstraint::create(sourcePoint, targetPoint, match.weight),
+                    nullptr, const_cast<double*>(poseIncrement.getData())
+                );
 
                 if (m_bUsePointToPlaneConstraints) {
                     const auto& targetNormal = targetNormals[match.idx];
@@ -340,7 +358,9 @@ private:
                     // TODO: Create a new point-to-plane cost function and add it as constraint (i.e. residual block) 
                     // to the Ceres problem.
 
-
+                    problem.AddResidualBlock(
+                        PointToPlaneConstraint::create(sourcePoint, targetPoint, targetNormal, match.weight),
+                        nullptr, const_cast<double*>(poseIncrement.getData()));
                 }
             }
         }
@@ -427,19 +447,28 @@ private:
             const auto& n = targetNormals[i];
 
             // TODO: Add the point-to-plane constraints to the system
-
+            b[4 * i] = (n.dot(d)) - (n.dot(s));
+            A.block(4 * i, 0, 1, 3) = (s.cross(n)).transpose();
+            A.block(4 * i, 3, 1, 3) = n.transpose();
 
             // TODO: Add the point-to-point constraints to the system
+            Matrix3f skewSymmetric;
+            skewSymmetric << 0, s[2], -s[1], -s[2], 0, s[0], s[1], -s[0], 0;
 
+            A.block(4 * i + 1, 0, 3, 3) = skewSymmetric;
+            A.block(4 * i + 1, 3, 3, 3) = Matrix3f::Identity();
+            Vector3f d_minus_s = d - s;
+            b[4 * i + 1] = d_minus_s[0];
+            b[4 * i + 2] = d_minus_s[1];
+            b[4 * i + 3] = d_minus_s[2];
 
             //TODO: Optionally, apply a higher weight to point-to-plane correspondences
-
 
         }
 
         // TODO: Solve the system
         VectorXf x(6);
-
+        x = A.bdcSvd(ComputeThinU | ComputeThinV).solve(b);
 
         float alpha = x(0), beta = x(1), gamma = x(2);
 
@@ -452,7 +481,8 @@ private:
 
         // TODO: Build the pose matrix using the rotation and translation matrices
         Matrix4f estimatedPose = Matrix4f::Identity();
-
+        estimatedPose.block<3, 3>(0, 0) = rotation;
+        estimatedPose.block<3, 1>(0, 3) = translation;
 
         return estimatedPose;
     }
